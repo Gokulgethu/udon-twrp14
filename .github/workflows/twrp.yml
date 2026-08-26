@@ -102,7 +102,7 @@ jobs:
           cd twrp
           ok=0
           for i in 1 2 3 4 5; do
-            if repo sync -c --no-tags --prune -j8; then ok=1; echo "sync OK on attempt $i"; break; fi
+            if repo sync -c --prune -j8; then ok=1; echo "sync OK on attempt $i"; break; fi
             echo "sync attempt $i failed (network flake?), retrying in 30s..."
             sleep 30
           done
@@ -121,9 +121,17 @@ jobs:
           # at ~20% with "module unsupportedappusage-annotation-processor-lib
           # missing dependencies: guava". Building guava against the platform core
           # fixes the host variant.
+          echo "--- external/guava state before patch:"
+          ls external/guava 2>&1 | head -3 || true
+          if [ ! -f external/guava/Android.bp ]; then
+            echo "guava missing/empty — cloning fresh from AOSP at the manifest tag"
+            rm -rf external/guava
+            git clone -q --depth 1 -b android-14.0.0_r67 https://android.googlesource.com/platform/external/guava external/guava \
+              || git clone -q --depth 1 https://android.googlesource.com/platform/external/guava external/guava
+          fi
+          ls -la external/guava/Android.bp
           sed -i 's/sdk_version: "core_current",//g' external/guava/Android.bp
-          echo "--- guava Android.bp after patch:"
-          grep -n "sdk_version\|name: \"guava" external/guava/Android.bp | head -5
+          echo "--- guava patched:"; grep -n 'name: "guava' external/guava/Android.bp | head -3
       - name: Build TWRP recovery image
         run: |
           cd twrp
