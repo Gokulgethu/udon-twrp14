@@ -97,6 +97,20 @@ jobs:
           XMLEOF
           cat .repo/local_manifests/udon.xml
 
+      - name: Patch guava for host java consumers (minimal-manifest java rot)
+        run: |
+          cd twrp
+          # tools/platform-compat's annotation processors (pulled by the aconfig java
+          # pipeline) need guava as a HOST lib; external/guava's
+          # sdk_version: "core_current" makes it unresolvable for host consumers in
+          # the minimal manifest, so soong emits an ALLOW_MISSING stub and ninja dies
+          # at ~20% with "module unsupportedappusage-annotation-processor-lib
+          # missing dependencies: guava". Building guava against the platform core
+          # fixes the host variant.
+          sed -i 's/sdk_version: "core_current",//g' external/guava/Android.bp
+          echo "--- guava Android.bp after patch:"
+          grep -n "sdk_version\|name: \"guava" external/guava/Android.bp | head -5
+
       - name: Sync sources (~1061 repos, shallow)
         run: |
           cd twrp
