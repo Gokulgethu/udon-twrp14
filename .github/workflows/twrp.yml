@@ -111,27 +111,38 @@ jobs:
           du -sh .repo
 
 
-      - name: Patch guava for host java consumers (minimal-manifest java rot)
+      - name: Heal missing project checkouts (repo sync gaps)
         run: |
           cd twrp
-          # tools/platform-compat's annotation processors (pulled by the aconfig java
-          # pipeline) need guava as a HOST lib; external/guava's
-          # sdk_version: "core_current" makes it unresolvable for host consumers in
-          # the minimal manifest, so soong emits an ALLOW_MISSING stub and ninja dies
-          # at ~20% with "module unsupportedappusage-annotation-processor-lib
-          # missing dependencies: guava". Building guava against the platform core
-          # fixes the host variant.
-          echo "--- external/guava state before patch:"
-          ls external/guava 2>&1 | head -3 || true
-          if [ ! -f external/guava/Android.bp ]; then
-            echo "guava missing/empty — cloning fresh from AOSP at the manifest tag"
-            rm -rf external/guava
-            git clone -q --depth 1 -b android-14.0.0_r67 https://android.googlesource.com/platform/external/guava external/guava \
-              || git clone -q --depth 1 https://android.googlesource.com/platform/external/guava external/guava
-          fi
-          ls -la external/guava/Android.bp
-          sed -i 's/sdk_version: "core_current",//g' external/guava/Android.bp
-          echo "--- guava patched:"; grep -n 'name: "guava' external/guava/Android.bp | head -3
+          # repo sync can silently skip some tag-pinned projects (e.g. external/guava),
+          # leaving soong without those modules -> ALLOW_MISSING stubs -> ninja dies
+          # mid-build. Enumerate the resolved manifest and clone anything missing.
+          repo manifest > /tmp/resolved.xml 2>/dev/null || cp .repo/manifest.xml /tmp/resolved.xml
+          python3 /dev/stdin <<'EOF'
+          import xml.etree.ElementTree as ET
+          import subprocess, os
+          root = ET.parse('/tmp/resolved.xml').getroot()
+          remotes = {r.get('name'): (r.get('fetch') or '').rstrip('/') for r in root.iter('remote')}
+          d = root.find('default')
+          defrev = d.get('revision') if d is not None else None
+          defrem = d.get('remote') if d is not None else None
+          missing = []
+          for p in root.iter('project'):
+              path, name = p.get('path'), p.get('name')
+              if not path or os.path.isdir(path):
+                  continue
+              rem = p.get('remote') or defrem
+              rev = p.get('revision') or defrev
+              base = remotes.get(rem) or 'https://android.googlesource.com'
+              missing.append((path, base + '/' + name, rev))
+          print('missing projects: %d' % len(missing))
+          for path, url, rev in missing:
+              print('  cloning %s <- %s @ %s' % (path, url, rev))
+              if subprocess.run(['git', 'clone', '-q', '--depth', '1', '-b', rev, url, path]).returncode != 0:
+                  subprocess.run(['git', 'clone', '-q', '--depth', '1', url, path])
+          print('heal done')
+          EOF
+
       - name: Build TWRP recovery image
         run: |
           cd twrp
